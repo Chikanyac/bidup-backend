@@ -5,25 +5,6 @@ const cors = require("cors");
 const { Server } = require("socket.io");
 
 // =======================
-// DATABASE
-// =======================
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.log("MongoDB error:", err));
-
-// =======================
-// SCHEMA
-// =======================
-const BidSchema = new mongoose.Schema({
-  carId: String,
-  price: Number,
-  user: String,
-  time: { type: Date, default: Date.now }
-});
-
-const Bid = mongoose.model("Bid", BidSchema);
-
-// =======================
 // APP SETUP
 // =======================
 const app = express();
@@ -35,12 +16,42 @@ app.use(cors({
 app.use(express.json());
 
 // =======================
+// DATABASE
+// =======================
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB connected"))
+  .catch(err => console.log("MongoDB error:", err));
+
+// =======================
+// SCHEMAS
+// =======================
+const AuctionSchema = new mongoose.Schema({
+  carId: { type: String, unique: true },
+  title: String,
+  startingPrice: Number,
+  currentPrice: Number,
+  image: String,
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Auction = mongoose.model("Auction", AuctionSchema);
+
+const BidSchema = new mongoose.Schema({
+  carId: String,
+  price: Number,
+  user: String,
+  time: { type: Date, default: Date.now }
+});
+
+const Bid = mongoose.model("Bid", BidSchema);
+
+// =======================
 // HTTP SERVER
 // =======================
 const server = http.createServer(app);
 
 // =======================
-// SOCKET.IO SETUP
+// SOCKET.IO
 // =======================
 const io = new Server(server, {
   cors: {
@@ -57,12 +68,45 @@ app.get("/", (req, res) => {
 });
 
 // =======================
-// SOCKET LOGIC
+// CREATE AUCTION (SELL VEHICLE)
+// =======================
+app.post("/create-auction", async (req, res) => {
+  try {
+    const { carId, title, startingPrice, image } = req.body;
+
+    const auction = new Auction({
+      carId,
+      title,
+      startingPrice,
+      currentPrice: startingPrice,
+      image
+    });
+
+    await auction.save();
+
+    io.emit("newAuction", auction);
+
+    res.json({ success: true, auction });
+
+  } catch (err) {
+    console.log("Create auction error:", err);
+    res.status(500).json({ error: "Failed to create auction" });
+  }
+});
+
+// =======================
+// SOCKET CONNECTION
 // =======================
 io.on("connection", async (socket) => {
   console.log("User connected:", socket.id);
 
-  // Send last 50 bids on connect
+  try {
+    const auctions = await Auction.find();
+    socket.emit("initAuctions", auctions);
+  } catch (err) {
+    console.log("Auction load error:", err);
+  }
+
   try {
     const history = await Bid.find()
       .sort({ time: -1 })
@@ -73,16 +117,34 @@ io.on("connection", async (socket) => {
     console.log("History error:", err);
   }
 
+  // =======================
   // PLACE BID
+  // =======================
   socket.on("placeBid", async (data) => {
     try {
-      console.log("Bid received:", data);
+      const { carId, amount, user } = data;
 
-      const bid = new Bid(data);
+      const auction = await Auction.findOne({ carId });
+      if (!auction) return;
+
+      if (amount <= auction.currentPrice) return;
+
+      auction.currentPrice = amount;
+      await auction.save();
+
+      const bid = new Bid({
+        carId,
+        price: amount,
+        user
+      });
+
       await bid.save();
 
-      // broadcast update to all users
-      io.emit("bidUpdate", data);
+      io.emit("bidUpdate", {
+        carId,
+        amount,
+        user
+      });
 
     } catch (err) {
       console.log("Bid error:", err);
