@@ -1,76 +1,73 @@
+const mongoose = require("mongoose");
 const express = require("express");
 const http = require("http");
-const { Server } = require("socket.io");
 const cors = require("cors");
+const { Server } = require("socket.io");
+
+
+const BidSchema = new mongoose.Schema({
+  carId: String,
+  price: Number,
+  user: String,
+  time: { type: Date, default: Date.now }
+});
+
+const Bid = mongoose.model("Bid", BidSchema);
 
 const app = express();
-app.use(cors());
+
+// IMPORTANT: Express CORS (HTTP routes only)
+app.use(cors({
+  origin: "https://bidup.co.zw"
+}));
 
 const server = http.createServer(app);
+
+// IMPORTANT: Socket.io CORS (THIS FIXES YOUR ERROR)
 const io = new Server(server, {
   cors: {
-    origin: "*", // later restrict to your domain
-  },
+    origin: "https://bidup.co.zw",
+    methods: ["GET", "POST"]
+  }
 });
 
-// ----------------------
-// AUCTION STATE (in-memory MVP)
-// ----------------------
-let auctions = {
-  aqua: { price: 4200 },
-  fit: { price: 5100 },
-  cx5: { price: 8750 },
-};
-
-// ----------------------
-// SOCKET CONNECTION
-// ----------------------
-io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
-
-  // Send current auction state on join
-  socket.emit("init", auctions);
-
-  // ----------------------
-  // HANDLE BIDS
-  // ----------------------
-  socket.on("placeBid", (data) => {
-    const { carId, amount, user } = data;
-
-    if (!auctions[carId]) return;
-
-    // validate bid
-    if (amount <= auctions[carId].price) return;
-
-    auctions[carId].price = amount;
-
-    // broadcast update to ALL users
-    io.emit("bidUpdate", {
-      carId,
-      price: amount,
-      user: user || "Anonymous",
-    });
-
-    console.log(`New bid on ${carId}: $${amount}`);
-  });
-
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-  });
-});
-
-// ----------------------
-// BASIC ROUTE
-// ----------------------
+// TEST ROUTE
 app.get("/", (req, res) => {
   res.send("BidUp Auction Backend Running 🚗⚡");
 });
 
-// ----------------------
-// START SERVER
-// ----------------------
+// SOCKET LOGIC
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  socket.on("placeBid", (data) => {
+    console.log("Bid received:", data);
+
+  socket.on("placeBid", async (data) => {
+  const bid = new Bid(data);
+  await bid.save();
+
+  io.emit("bidUpdate", data);
+});
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected");
+  });
+});
+
+// IMPORTANT: USE PORT FROM RENDER
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log("Server running on port", PORT);
+});
+
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB connected"))
+  .catch(err => console.log(err));
+
+
+socket.on("connection", async (socket) => {
+  const history = await Bid.find().sort({ time: -1 }).limit(50);
+  socket.emit("bidHistory", history);
 });
