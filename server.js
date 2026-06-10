@@ -5,6 +5,9 @@ const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 
+console.log("🚀 SERVER STARTING...");
+console.log("PORT:", process.env.PORT);
+
 // =====================
 // DB
 // =====================
@@ -15,20 +18,18 @@ connectDB();
 // APP
 // =====================
 const app = express();
+
+// IMPORTANT: raw body + cors order fixed
+app.use(cors({
+  origin: ["https://bidup.co.zw", "http://localhost:3000"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  credentials: true
+}));
+
 app.use(express.json());
 
 // =====================
-// CORS
-// =====================
-app.use(
-  cors({
-    origin: "https://bidup.co.zw",
-    credentials: true
-  })
-);
-
-// =====================
-// ROUTES (IMPORT SAFELY)
+// ROUTES
 // =====================
 const authRoutes = require("./routes/authRoutes");
 const auctionRoutes = require("./routes/auctionRoutes");
@@ -36,47 +37,53 @@ const sellerRoutes = require("./routes/sellerRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 
 // =====================
-// HEALTH CHECKS (IMPORTANT FOR RENDER)
+// HEALTH
 // =====================
 app.get("/", (req, res) => {
   res.send("🚗 BidUp API Running");
 });
 
 app.get("/test", (req, res) => {
-  res.json({ ok: true, message: "API working" });
+  res.json({ ok: true });
 });
 
 // =====================
-// CREATE HTTP SERVER
+// HTTP SERVER
 // =====================
 const server = http.createServer(app);
 
 // =====================
-// SOCKET.IO (ONLY ONCE)
+// SOCKET IO (FIXED FOR RENDER)
 // =====================
 const io = new Server(server, {
   cors: {
-    origin: "https://bidup.co.zw",
+    origin: ["https://bidup.co.zw", "http://localhost:3000"],
     methods: ["GET", "POST"],
     credentials: true
-  }
+  },
+  transports: ["websocket", "polling"]
 });
 
-// =====================
-// SOCKET INIT MODULE
-// =====================
+// socket init (safe)
 require("./config/socket").initSocket(io);
 
-// =====================
-// MAKE IO AVAILABLE TO ROUTES
-// =====================
+// debug connection
+io.on("connection", (socket) => {
+  console.log("🔌 SOCKET CONNECTED:", socket.id);
+
+  socket.on("disconnect", () => {
+    console.log("❌ SOCKET DISCONNECTED:", socket.id);
+  });
+});
+
+// make io available
 app.use((req, res, next) => {
   req.io = io;
   next();
 });
 
 // =====================
-// ROUTES MOUNTING (AFTER MIDDLEWARE IS SAFE)
+// ROUTES MOUNT
 // =====================
 app.use("/api/auth", authRoutes);
 app.use("/api/auctions", auctionRoutes);
@@ -84,13 +91,7 @@ app.use("/api/seller", sellerRoutes);
 app.use("/api/admin", adminRoutes);
 
 // =====================
-// AUCTION AUTO CLOSE JOB
-// =====================
-const { startAuctionClosingJob } = require("./jobs/closeAuctions");
-startAuctionClosingJob(io);
-
-// =====================
-// START SERVER
+// START
 // =====================
 const PORT = process.env.PORT || 3000;
 
