@@ -1,100 +1,58 @@
 let ioInstance = null;
+
 const Auction = require("../models/Auction");
 
-const initSocket = (io) => {
+function initSocket(io) {
   ioInstance = io;
 
   io.on("connection", async (socket) => {
-    console.log("🔌 Connected:", socket.id);
+    console.log("🔌 USER CONNECTED:", socket.id);
 
-    // =====================
-    // SEND LIVE AUCTIONS ON CONNECT
-    // =====================
-    try {
-      const auctions = await Auction.find({ status: "live" });
-      socket.emit("initAuctions", auctions);
-    } catch (err) {
-      console.error("❌ Failed to load auctions:", err);
-    }
-
-    // =====================
-    // GET LIVE AUCTIONS MANUALLY
-    // =====================
+    /* =====================
+       SEND LIVE AUCTIONS
+    ====================== */
     socket.on("getLiveAuctions", async () => {
       const auctions = await Auction.find({ status: "live" });
       socket.emit("initAuctions", auctions);
     });
 
-    // =====================
-    // JOIN AUCTION ROOM
-    // =====================
+    /* =====================
+       JOIN ROOM
+    ====================== */
     socket.on("joinAuction", (auctionId) => {
-      if (!auctionId) return;
       socket.join(auctionId);
-      console.log(`📦 Joined auction room: ${auctionId}`);
     });
 
-    // =====================
-    // PLACE BID
-    // =====================
-    socket.on("placeBid", async (data) => {
-      try {
-        const { auctionId, bidAmount, userId } = data;
+    /* =====================
+       PLACE BID (CORE LOGIC)
+    ====================== */
+    socket.on("placeBid", async ({ auctionId, bidAmount, userId }) => {
+      const auction = await Auction.findById(auctionId);
+      if (!auction) return;
 
-        if (!auctionId || !bidAmount || !userId) {
-          return socket.emit("bidError", "Missing bid data");
-        }
+      if (auction.status !== "live") return;
 
-        const auction = await Auction.findById(auctionId);
+      if (bidAmount <= auction.currentPrice) return;
 
-        if (!auction) return socket.emit("bidError", "Auction not found");
+      auction.currentPrice = bidAmount;
+      auction.bidCount += 1;
 
-        if (auction.status !== "live") {
-          return socket.emit("bidError", "Auction not active");
-        }
+      auction.lastBidder = userId;
 
-        if (bidAmount <= auction.currentPrice) {
-          return socket.emit("bidError", "Bid must be higher");
-        }
+      await auction.save();
 
-        auction.currentPrice = bidAmount;
-        auction.bidCount = (auction.bidCount || 0) + 1;
-
-        await auction.save();
-
-        io.to(auctionId).emit("bidUpdated", {
-          auctionId,
-          currentPrice: auction.currentPrice,
-          bidCount: auction.bidCount,
-          latestBid: {
-            userId,
-            amount: bidAmount
-          }
-        });
-
-        console.log("💰 BID:", { auctionId, bidAmount, userId });
-
-      } catch (err) {
-        console.error("❌ BID ERROR:", err);
-        socket.emit("bidError", "Server error");
-      }
+      io.to(auctionId).emit("bidUpdated", {
+        auctionId,
+        currentPrice: auction.currentPrice,
+        bidCount: auction.bidCount,
+        lastBidder: userId
+      });
     });
 
-    // =====================
-    // DISCONNECT
-    // =====================
     socket.on("disconnect", () => {
-      console.log("❌ Disconnected:", socket.id);
+      console.log("❌ DISCONNECTED:", socket.id);
     });
   });
-};
+}
 
-const getIO = () => {
-  if (!ioInstance) throw new Error("Socket not initialized");
-  return ioInstance;
-};
-
-module.exports = {
-  initSocket,
-  getIO
-};
+module.exports = { initSocket };

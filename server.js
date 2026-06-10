@@ -5,141 +5,67 @@ const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 
-console.log("🚀 SERVER STARTING...");
-console.log("PORT:", process.env.PORT);
-
-// =====================
-// DB
-// =====================
 const connectDB = require("./config/db");
 connectDB();
 
-// =====================
-// APP INIT
-// =====================
 const app = express();
-
-// =====================
-// CORS CONFIG
-// =====================
-const allowedOrigins = [
-  "https://bidup.co.zw",
-  "http://localhost:3000"
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    return callback(new Error("CORS blocked"));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
-
-// =====================
-// 🔥 FIX: PRE-FLIGHT (NO app.options("*"))
-// =====================
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
-
-// =====================
-// BODY PARSER
-// =====================
-app.use(express.json());
-
-// =====================
-// ROUTES
-// =====================
-const authRoutes = require("./routes/authRoutes");
-const auctionRoutes = require("./routes/auctionRoutes");
-const sellerRoutes = require("./routes/sellerRoutes");
-const adminRoutes = require("./routes/adminRoutes");
-
-// =====================
-// HEALTH CHECK
-// =====================
-app.get("/", (req, res) => {
-  res.send("🚗 BidUp API Running");
-});
-
-app.get("/test", (req, res) => {
-  res.json({ ok: true, message: "API working" });
-});
-
-// =====================
-// HTTP SERVER
-// =====================
 const server = http.createServer(app);
 
-// =====================
-// SOCKET.IO
-// =====================
+/* =====================
+   CORS (V2 SAFE)
+===================== */
+app.use(
+  cors({
+    origin: [
+      "https://bidup.co.zw",
+      "https://www.bidup.co.zw",
+      "http://localhost:3000"
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true
+  })
+);
+
+app.options("*", cors());
+app.use(express.json());
+
+/* =====================
+   SOCKET.IO (V2 STABLE)
+===================== */
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: [
+      "https://bidup.co.zw",
+      "https://www.bidup.co.zw",
+      "http://localhost:3000"
+    ],
     methods: ["GET", "POST"],
     credentials: true
-  },
-  transports: ["websocket", "polling"]
+  }
 });
 
-// =====================
-// SOCKET INIT
-// =====================
 require("./config/socket").initSocket(io);
 
-// debug socket
-io.on("connection", (socket) => {
-  console.log("🔌 SOCKET CONNECTED:", socket.id);
+/* =====================
+   ROUTES
+===================== */
+app.use("/api/auth", require("./routes/authRoutes"));
+app.use("/api/auctions", require("./routes/auctionRoutes"));
+app.use("/api/seller", require("./routes/sellerRoutes"));
+app.use("/api/admin", require("./routes/adminRoutes"));
 
-  socket.on("disconnect", () => {
-    console.log("❌ SOCKET DISCONNECTED:", socket.id);
-  });
+/* =====================
+   HEALTH CHECK
+===================== */
+app.get("/", (req, res) => {
+  res.send("🚗 BidUp V2 Marketplace Running");
 });
 
-// =====================
-// MAKE IO AVAILABLE
-// =====================
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
-
-// =====================
-// ROUTES MOUNT
-// =====================
-app.use("/api/auth", authRoutes);
-app.use("/api/auctions", auctionRoutes);
-app.use("/api/seller", sellerRoutes);
-app.use("/api/admin", adminRoutes);
-
-// =====================
-// AUCTION JOB
-// =====================
-const { startAuctionClosingJob } = require("./jobs/closeAuctions");
-startAuctionClosingJob(io);
-
-// =====================
-// START SERVER
-// =====================
+/* =====================
+   START
+===================== */
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log(`🚀 BidUp API running on port ${PORT}`);
+  console.log(`🚀 BidUp V2 running on port ${PORT}`);
 });
