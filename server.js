@@ -1,49 +1,43 @@
-const mongoose = require("mongoose");
+require("dotenv").config();
+
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 
-// =======================
-// APP SETUP
-// =======================
-const app = express();
-
-app.use(cors({
-  origin: "https://bidup.co.zw"
-}));
-
-app.use(express.json());
+console.log("🔥 SERVER STARTING - AUTH ROUTES SHOULD LOAD");
 
 // =======================
 // DATABASE
 // =======================
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.log("MongoDB error:", err));
+const connectDB = require("./config/db");
+connectDB();
 
 // =======================
-// SCHEMAS
+// ROUTES
 // =======================
-const AuctionSchema = new mongoose.Schema({
-  carId: { type: String, unique: true },
-  title: String,
-  startingPrice: Number,
-  currentPrice: Number,
-  image: String,
-  createdAt: { type: Date, default: Date.now }
-});
+const authRoutes = require("./routes/authRoutes");
+const auctionRoutes = require("./routes/auctionRoutes");
+const sellerRoutes = require("./routes/sellerRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 
-const Auction = mongoose.model("Auction", AuctionSchema);
+console.log("📦 AuthRoutes loaded:", !!authRoutes);
 
-const BidSchema = new mongoose.Schema({
-  carId: String,
-  price: Number,
-  user: String,
-  time: { type: Date, default: Date.now }
-});
+// =======================
+// APP INIT
+// =======================
+const app = express();
+app.use(express.json());
 
-const Bid = mongoose.model("Bid", BidSchema);
+// =======================
+// CORS
+// =======================
+app.use(
+  cors({
+    origin: "https://bidup.co.zw",
+    credentials: true
+  })
+);
 
 // =======================
 // HTTP SERVER
@@ -56,105 +50,58 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "https://bidup.co.zw",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
 // =======================
-// TEST ROUTE
+// MAKE IO AVAILABLE TO APP
+// =======================
+app.set("io", io);
+
+// middleware so controllers can use req.io
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
+// =======================
+// SOCKET INIT MODULE
+// =======================
+require("./config/socket").initSocket(io);
+
+// =======================
+// ROUTES (AFTER IO MIDDLEWARE)
+// =======================
+app.use("/api/auth", authRoutes);
+app.use("/api/auctions", auctionRoutes);
+app.use("/api/seller", sellerRoutes);
+app.use("/api/admin", adminRoutes);
+
+app._router.stack.forEach((r) => {
+  if (r.route) {
+    console.log("ROUTE:", r.route.path);
+  }
+});
+
+// =======================
+// HEALTH CHECK
 // =======================
 app.get("/", (req, res) => {
-  res.send("BidUp Auction Backend Running 🚗⚡");
+  res.send("🚗 BidUp V5 Marketplace API Running");
+});
+
+// TEST ROUTE (TEMP DEBUG)
+app.get("/test", (req, res) => {
+  res.json({ ok: true, message: "API working" });
 });
 
 // =======================
-// CREATE AUCTION (SELL VEHICLE)
+// AUCTION AUTO CLOSE JOB
 // =======================
-app.post("/create-auction", async (req, res) => {
-  try {
-    const { carId, title, startingPrice, image } = req.body;
-
-    const auction = new Auction({
-      carId,
-      title,
-      startingPrice,
-      currentPrice: startingPrice,
-      image
-    });
-
-    await auction.save();
-
-    io.emit("newAuction", auction);
-
-    res.json({ success: true, auction });
-
-  } catch (err) {
-    console.log("Create auction error:", err);
-    res.status(500).json({ error: "Failed to create auction" });
-  }
-});
-
-// =======================
-// SOCKET CONNECTION
-// =======================
-io.on("connection", async (socket) => {
-  console.log("User connected:", socket.id);
-
-  try {
-    const auctions = await Auction.find();
-    socket.emit("initAuctions", auctions);
-  } catch (err) {
-    console.log("Auction load error:", err);
-  }
-
-  try {
-    const history = await Bid.find()
-      .sort({ time: -1 })
-      .limit(50);
-
-    socket.emit("bidHistory", history);
-  } catch (err) {
-    console.log("History error:", err);
-  }
-
-  // =======================
-  // PLACE BID
-  // =======================
-  socket.on("placeBid", async (data) => {
-    try {
-      const { carId, amount, user } = data;
-
-      const auction = await Auction.findOne({ carId });
-      if (!auction) return;
-
-      if (amount <= auction.currentPrice) return;
-
-      auction.currentPrice = amount;
-      await auction.save();
-
-      const bid = new Bid({
-        carId,
-        price: amount,
-        user
-      });
-
-      await bid.save();
-
-      io.emit("bidUpdate", {
-        carId,
-        amount,
-        user
-      });
-
-    } catch (err) {
-      console.log("Bid error:", err);
-    }
-  });
-
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-  });
-});
+const { startAuctionClosingJob } = require("./jobs/closeAuctions");
+startAuctionClosingJob(io);
 
 // =======================
 // START SERVER
@@ -162,5 +109,5 @@ io.on("connection", async (socket) => {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log(`🚀 BidUp V5 running on port ${PORT}`);
 });
