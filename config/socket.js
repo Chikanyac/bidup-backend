@@ -1,58 +1,71 @@
 let ioInstance = null;
-
 const Auction = require("../models/Auction");
 
-function initSocket(io) {
+const initSocket = (io) => {
   ioInstance = io;
 
-  io.on("connection", async (socket) => {
-    console.log("🔌 USER CONNECTED:", socket.id);
+  io.on("connection", (socket) => {
+    console.log("🔌 Connected:", socket.id);
 
-    /* =====================
-       SEND LIVE AUCTIONS
-    ====================== */
-    socket.on("getLiveAuctions", async () => {
-      const auctions = await Auction.find({ status: "live" });
-      socket.emit("initAuctions", auctions);
-    });
-
-    /* =====================
-       JOIN ROOM
-    ====================== */
+    // =====================
+    // JOIN AUCTION ROOM
+    // =====================
     socket.on("joinAuction", (auctionId) => {
+      if (!auctionId) return;
       socket.join(auctionId);
     });
 
-    /* =====================
-       PLACE BID (CORE LOGIC)
-    ====================== */
-    socket.on("placeBid", async ({ auctionId, bidAmount, userId }) => {
-      const auction = await Auction.findById(auctionId);
-      if (!auction) return;
+    // =====================
+    // GET LIVE AUCTIONS (IMPORTANT FIX)
+    // =====================
+    socket.on("getLiveAuctions", async () => {
+      try {
+        const auctions = await Auction.find({ status: "live" });
+        socket.emit("initAuctions", auctions);
+      } catch (err) {
+        console.error("Auction fetch error:", err);
+      }
+    });
 
-      if (auction.status !== "live") return;
+    // =====================
+    // PLACE BID
+    // =====================
+    socket.on("placeBid", async (data) => {
+      try {
+        const { auctionId, bidAmount, userId } = data;
 
-      if (bidAmount <= auction.currentPrice) return;
+        if (!auctionId || !bidAmount) {
+          return socket.emit("bidError", "Invalid bid");
+        }
 
-      auction.currentPrice = bidAmount;
-      auction.bidCount += 1;
+        const auction = await Auction.findById(auctionId);
+        if (!auction) return socket.emit("bidError", "Not found");
 
-      auction.lastBidder = userId;
+        if (bidAmount <= auction.currentPrice) {
+          return socket.emit("bidError", "Bid too low");
+        }
 
-      await auction.save();
+        auction.currentPrice = bidAmount;
+        auction.bidCount = (auction.bidCount || 0) + 1;
 
-      io.to(auctionId).emit("bidUpdated", {
-        auctionId,
-        currentPrice: auction.currentPrice,
-        bidCount: auction.bidCount,
-        lastBidder: userId
-      });
+        await auction.save();
+
+        io.to(auctionId).emit("bidUpdated", {
+          auctionId,
+          currentPrice: auction.currentPrice,
+          bidCount: auction.bidCount,
+          latestBid: { userId, amount: bidAmount }
+        });
+
+      } catch (err) {
+        console.error(err);
+      }
     });
 
     socket.on("disconnect", () => {
-      console.log("❌ DISCONNECTED:", socket.id);
+      console.log("❌ Disconnected:", socket.id);
     });
   });
-}
+};
 
 module.exports = { initSocket };

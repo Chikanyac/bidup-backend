@@ -1,11 +1,18 @@
 const router = require("express").Router();
+const Auction = require("../models/Auction");
 
-const {
-  createAuction,
-  getAuctions
-} = require("../controllers/auctionController");
+// =======================
+// GET LIVE AUCTIONS
+// =======================
+router.get("/", async (req, res) => {
+  try {
+    const auctions = await Auction.find({ status: "live" }).sort({ createdAt: -1 });
 
-router.get("/", getAuctions);
-router.post("/create", createAuction);
+    res.json(auctions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to load auctions" });
+  }
+});
 
 module.exports = router;
