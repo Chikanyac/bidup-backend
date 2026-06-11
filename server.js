@@ -13,31 +13,30 @@ const connectDB = require("./config/db");
 connectDB();
 
 // =====================
-// APP
+// APP INIT
 // =====================
 const app = express();
 
-// IMPORTANT: JSON + URL ENCODED (fixes register/login issues)
+// =====================
+// BODY PARSERS
+// =====================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // =====================
-// FIXED CORS (VERY IMPORTANT)
+// CORS CONFIG (PRODUCTION SAFE)
 // =====================
-app.use(
-  cors({
-    origin: [
-      "https://bidup.co.zw",
-      "https://www.bidup.co.zw",
-      "http://localhost:3000"
-    ],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true
-  })
-);
+const corsOptions = {
+  origin: [
+    "https://bidup.co.zw",
+    "https://www.bidup.co.zw",
+    "http://localhost:3000"
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  credentials: true
+};
 
-// HANDLE PRE-FLIGHT REQUESTS (FIX CORS ERROR)
-app.options("*", cors());
+app.use(cors(corsOptions));
 
 // =====================
 // ROUTES
@@ -64,32 +63,25 @@ app.get("/test", (req, res) => {
 });
 
 // =====================
-// HTTP SERVER
+// CREATE HTTP SERVER
 // =====================
 const server = http.createServer(app);
 
 // =====================
-// SOCKET.IO (FIXED FOR RENDER)
+// SOCKET.IO (RENDER SAFE)
 // =====================
 const io = new Server(server, {
-  cors: {
-    origin: [
-      "https://bidup.co.zw",
-      "https://www.bidup.co.zw",
-      "http://localhost:3000"
-    ],
-    methods: ["GET", "POST"],
-    credentials: true
-  },
-  transports: ["websocket", "polling"]
+  cors: corsOptions,
+  transports: ["polling", "websocket"],
+  allowEIO3: true
 });
 
 // =====================
-// SOCKET INIT
+// SOCKET INIT MODULE
 // =====================
 require("./config/socket").initSocket(io);
 
-// Debug
+// Debug connections
 io.on("connection", (socket) => {
   console.log("🔌 SOCKET CONNECTED:", socket.id);
 
@@ -99,7 +91,7 @@ io.on("connection", (socket) => {
 });
 
 // =====================
-// GLOBAL IO
+// MAKE IO AVAILABLE IN ROUTES
 // =====================
 app.use((req, res, next) => {
   req.io = io;
@@ -107,10 +99,18 @@ app.use((req, res, next) => {
 });
 
 // =====================
-// AUCTION JOB
+// AUCTION BACKGROUND JOB
 // =====================
 const { startAuctionClosingJob } = require("./jobs/closeAuctions");
 startAuctionClosingJob(io);
+
+// =====================
+// GLOBAL ERROR HANDLER
+// =====================
+app.use((err, req, res, next) => {
+  console.error("❌ SERVER ERROR:", err);
+  res.status(500).json({ error: "Internal Server Error" });
+});
 
 // =====================
 // START SERVER
